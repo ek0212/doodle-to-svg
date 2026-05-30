@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Doodle to SVG</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="app">
+    <header>
+      <h1>Doodle to SVG</h1>
+      <p class="subtitle">Upload a photo of your doodles. Get clean SVGs back.</p>
+    </header>
+
+    <div id="upload-zone" class="upload-zone">
+      <div class="upload-content">
+        <svg class="upload-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+          <path d="M12 16V4m0 0L8 8m4-4l4 4"/>
+          <path d="M2 17l.621 2.485A2 2 0 004.561 21h14.878a2 2 0 001.94-1.515L22 17"/>
+        </svg>
+        <p>Drop image here or <label for="file-input" class="browse-link">browse</label></p>
+        <p class="hint">PNG, JPG, HEIC — photos of hand-drawn doodles work best</p>
+      </div>
+      <input type="file" id="file-input" accept="image/*" hidden>
+    </div>
+
+    <div id="controls" class="controls hidden">
+      <div class="control-group">
+        <label for="threshold">Black/White Threshold</label>
+        <input type="range" id="threshold" min="50" max="220" value="128">
+        <span id="threshold-val">128</span>
+      </div>
+      <div class="control-group">
+        <label for="min-size">Min Icon Size (px)</label>
+        <input type="range" id="min-size" min="10" max="200" value="30">
+        <span id="min-size-val">30</span>
+      </div>
+      <div class="control-group">
+        <label for="group-dist">Group Distance (px)</label>
+        <input type="range" id="group-dist" min="0" max="200" value="40">
+        <span id="group-dist-val">40</span>
+      </div>
+      <div class="control-group">
+        <label for="padding">Icon Padding (px)</label>
+        <input type="range" id="padding" min="0" max="40" value="10">
+        <span id="padding-val">10</span>
+      </div>
+      <div class="button-row">
+        <button id="btn-single" class="btn btn-primary">Trace Whole Page</button>
+        <button id="btn-split" class="btn btn-accent">Auto-Split Icons</button>
+        <button id="btn-reset" class="btn btn-ghost">Reset</button>
+      </div>
+    </div>
+
+    <div id="preview-section" class="preview-section hidden">
+      <div class="preview-header">
+        <h2 id="result-title">Preview</h2>
+        <button id="btn-download-all" class="btn btn-primary hidden">Download All (.zip)</button>
+      </div>
+      <div id="preview-grid" class="preview-grid"></div>
+    </div>
+  </div>
+
+  <canvas id="work-canvas" hidden></canvas>
+
+  <script src="https://cdn.jsdelivr.net/npm/imagetracerjs@1.2.6/imagetracer_v1.2.6.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/file-saver@2.0.5/dist/FileSaver.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
