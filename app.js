@@ -1,3 +1,12 @@
+// --- Feature flags ---
+const FLAGS = {
+  DEBUG: new URLSearchParams(window.location.search).has("debug"),
+};
+
+function dbg(...args) {
+  if (FLAGS.DEBUG) console.log("[doodle2svg]", ...args);
+}
+
 /** @type {HTMLCanvasElement} */
 const canvas = document.getElementById("work-canvas");
 const ctx = canvas.getContext("2d", { willReadFrequently: true });
@@ -42,11 +51,13 @@ uploadZone.addEventListener("drop", (e) => {
 
 function handleFile(file) {
   if (!file) return;
+  dbg("file selected:", file.name, file.type, `${(file.size / 1024).toFixed(1)}KB`);
   const reader = new FileReader();
   reader.onload = (e) => {
     const img = new Image();
     img.onload = () => {
       loadedImage = img;
+      dbg("image loaded:", img.naturalWidth, "x", img.naturalHeight);
       showImagePreview(e.target.result);
       controls.classList.remove("hidden");
       previewSection.classList.add("hidden");
@@ -94,11 +105,21 @@ function traceWhole() {
   showSpinner("Tracing...");
 
   setTimeout(() => {
-    const binarized = getBinarizedCanvas(loadedImage);
-    const svgStr = traceCanvas(binarized);
-    generatedSVGs = [{ name: "doodle.svg", svg: svgStr }];
-    renderResults(true);
-    hideSpinner();
+    try {
+      dbg("traceWhole: threshold =", thresholdInput.value);
+      const t0 = performance.now();
+      const binarized = getBinarizedCanvas(loadedImage);
+      dbg("binarize done:", (performance.now() - t0).toFixed(1), "ms");
+      const svgStr = traceCanvas(binarized);
+      dbg("trace done:", (performance.now() - t0).toFixed(1), "ms, SVG size:", svgStr.length, "chars");
+      generatedSVGs = [{ name: "doodle.svg", svg: svgStr }];
+      renderResults(true);
+    } catch (err) {
+      console.error("traceWhole failed:", err);
+      alert("Tracing failed: " + err.message);
+    } finally {
+      hideSpinner();
+    }
   }, 50);
 }
 
@@ -109,67 +130,88 @@ function autoSplit() {
   showSpinner("Detecting icons...");
 
   setTimeout(() => {
-    const threshold = parseInt(thresholdInput.value);
-    const minSize = parseInt(minSizeInput.value);
-    const groupDist = parseInt(groupDistInput.value);
-    const pad = parseInt(paddingInput.value);
+    try {
+      const threshold = parseInt(thresholdInput.value);
+      const minSize = parseInt(minSizeInput.value);
+      const groupDist = parseInt(groupDistInput.value);
+      const pad = parseInt(paddingInput.value);
 
-    // Draw and binarize
-    canvas.width = loadedImage.naturalWidth;
-    canvas.height = loadedImage.naturalHeight;
-    ctx.drawImage(loadedImage, 0, 0);
-    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-    const binary = binarize(imageData, threshold);
+      dbg("autoSplit: threshold =", threshold, "minSize =", minSize, "groupDist =", groupDist, "pad =", pad);
+      const t0 = performance.now();
 
-    // Connected components
-    const bboxes = findConnectedComponents(
-      binary,
-      canvas.width,
-      canvas.height,
-      minSize
-    );
+      // Draw and binarize
+      canvas.width = loadedImage.naturalWidth;
+      canvas.height = loadedImage.naturalHeight;
+      ctx.drawImage(loadedImage, 0, 0);
+      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const binary = binarize(imageData, threshold);
+      dbg("binarize done:", (performance.now() - t0).toFixed(1), "ms");
 
-    // Merge nearby bboxes using group distance
-    const merged = mergeBBoxes(bboxes, groupDist);
+      // Connected components
+      const bboxes = findConnectedComponents(
+        binary,
+        canvas.width,
+        canvas.height,
+        minSize
+      );
+      dbg("connected components:", bboxes.length, "found in", (performance.now() - t0).toFixed(1), "ms");
+      if (FLAGS.DEBUG) bboxes.forEach((b, i) => dbg(`  cc[${i}]:`, b));
 
-    if (merged.length === 0) {
+      // Merge nearby bboxes using group distance
+      const merged = mergeBBoxes(bboxes, groupDist);
+      dbg("after merge:", merged.length, "icons");
+      if (FLAGS.DEBUG) merged.forEach((b, i) => dbg(`  icon[${i}]:`, b));
+
+      if (merged.length === 0) {
+        hideSpinner();
+        alert("No icons detected. Try lowering the threshold or min size.");
+        return;
+      }
+
+      showSpinner(`Tracing ${merged.length} icon${merged.length > 1 ? "s" : ""}...`);
+
+      setTimeout(() => {
+        try {
+          generatedSVGs = [];
+
+          merged.forEach((box, i) => {
+            const x = Math.max(0, box.x - pad);
+            const y = Math.max(0, box.y - pad);
+            const w = Math.min(canvas.width - x, box.w + pad * 2);
+            const h = Math.min(canvas.height - y, box.h + pad * 2);
+
+            // Extract region
+            const regionCanvas = document.createElement("canvas");
+            regionCanvas.width = w;
+            regionCanvas.height = h;
+            const rctx = regionCanvas.getContext("2d");
+            rctx.drawImage(loadedImage, x, y, w, h, 0, 0, w, h);
+
+            const binarized = getBinarizedCanvas(
+              regionCanvas,
+              parseInt(thresholdInput.value)
+            );
+            const svgStr = traceCanvas(binarized);
+            dbg(`icon ${i + 1}: region ${w}x${h} at (${x},${y}), SVG ${svgStr.length} chars`);
+            generatedSVGs.push({
+              name: `icon-${String(i + 1).padStart(2, "0")}.svg`,
+              svg: svgStr,
+            });
+          });
+
+          renderResults(false);
+        } catch (err) {
+          console.error("autoSplit tracing failed:", err);
+          alert("Tracing failed: " + err.message);
+        } finally {
+          hideSpinner();
+        }
+      }, 50);
+    } catch (err) {
+      console.error("autoSplit detection failed:", err);
+      alert("Detection failed: " + err.message);
       hideSpinner();
-      alert("No icons detected. Try lowering the threshold or min size.");
-      return;
     }
-
-    showSpinner(`Tracing ${merged.length} icon${merged.length > 1 ? "s" : ""}...`);
-
-    setTimeout(() => {
-      generatedSVGs = [];
-
-      merged.forEach((box, i) => {
-        const x = Math.max(0, box.x - pad);
-        const y = Math.max(0, box.y - pad);
-        const w = Math.min(canvas.width - x, box.w + pad * 2);
-        const h = Math.min(canvas.height - y, box.h + pad * 2);
-
-        // Extract region
-        const regionCanvas = document.createElement("canvas");
-        regionCanvas.width = w;
-        regionCanvas.height = h;
-        const rctx = regionCanvas.getContext("2d");
-        rctx.drawImage(loadedImage, x, y, w, h, 0, 0, w, h);
-
-        const binarized = getBinarizedCanvas(
-          regionCanvas,
-          parseInt(thresholdInput.value)
-        );
-        const svgStr = traceCanvas(binarized);
-        generatedSVGs.push({
-          name: `icon-${String(i + 1).padStart(2, "0")}.svg`,
-          svg: svgStr,
-        });
-      });
-
-      renderResults(false);
-      hideSpinner();
-    }, 50);
   }, 50);
 }
 
@@ -365,7 +407,7 @@ function unionBox(a, b) {
 
 function traceCanvas(inputCanvas) {
   const imgd = inputCanvas
-    .getContext("2d")
+    .getContext("2d", { willReadFrequently: true })
     .getImageData(0, 0, inputCanvas.width, inputCanvas.height);
 
   const options = ImageTracer.optionpresets.default;
