@@ -10,7 +10,7 @@
   <div class="app">
     <header>
       <h1>Doodle to SVG</h1>
-      <p class="subtitle">Upload a photo of your doodles. Get clean SVGs back.</p>
+      <p class="subtitle">Upload a photo of your doodles, circle the ones you want, get SVGs.</p>
     </header>
 
     <div id="upload-zone" class="upload-zone">
@@ -25,44 +25,49 @@
       <input type="file" id="file-input" accept="image/*" hidden>
     </div>
 
-    <div id="controls" class="controls hidden">
-      <div class="control-group">
-        <label for="threshold">Black/White Threshold</label>
-        <input type="range" id="threshold" min="50" max="220" value="128">
-        <span id="threshold-val">128</span>
+    <!-- Drawing stage -->
+    <div id="draw-section" class="draw-section hidden">
+      <div class="draw-header">
+        <h2 id="draw-title">Draw around each icon</h2>
+        <div class="draw-actions">
+          <button id="btn-undo" class="btn btn-ghost btn-sm">Undo</button>
+          <button id="btn-clear" class="btn btn-ghost btn-sm">Clear All</button>
+        </div>
       </div>
-      <div class="control-group">
-        <label for="min-size">Min Icon Size (px)</label>
-        <input type="range" id="min-size" min="10" max="200" value="30">
-        <span id="min-size-val">30</span>
+      <p class="draw-hint">Circle each icon you want to trace. Click an existing region to remove it.</p>
+      <div class="draw-canvas-wrap">
+        <canvas id="draw-canvas"></canvas>
       </div>
-      <div class="control-group">
-        <label for="group-dist">Group Distance (px)</label>
-        <input type="range" id="group-dist" min="0" max="200" value="40">
-        <span id="group-dist-val">40</span>
-      </div>
-      <div class="control-group">
-        <label for="padding">Icon Padding (px)</label>
-        <input type="range" id="padding" min="0" max="40" value="10">
-        <span id="padding-val">10</span>
+      <div class="draw-controls">
+        <div class="control-group">
+          <label for="threshold">B/W Threshold</label>
+          <input type="range" id="threshold" min="50" max="220" value="128">
+          <span id="threshold-val">128</span>
+        </div>
+        <div class="control-group">
+          <label for="padding">Padding (px)</label>
+          <input type="range" id="padding" min="0" max="40" value="10">
+          <span id="padding-val">10</span>
+        </div>
       </div>
       <div class="button-row">
-        <button id="btn-single" class="btn btn-primary">Trace Whole Page</button>
-        <button id="btn-split" class="btn btn-accent">Auto-Split Icons</button>
-        <button id="btn-reset" class="btn btn-ghost">Reset</button>
+        <button id="btn-trace-whole" class="btn btn-ghost">Trace Whole Page</button>
+        <button id="btn-trace-regions" class="btn btn-accent" disabled>Trace Regions</button>
+        <button id="btn-new-image" class="btn btn-ghost">New Image</button>
       </div>
     </div>
 
     <div id="preview-section" class="preview-section hidden">
       <div class="preview-header">
         <h2 id="result-title">Preview</h2>
-        <button id="btn-download-all" class="btn btn-primary hidden">Download All (.zip)</button>
+        <div class="preview-actions">
+          <button id="btn-back-draw" class="btn btn-ghost btn-sm">Back to Drawing</button>
+          <button id="btn-download-all" class="btn btn-primary btn-sm hidden">Download All (.zip)</button>
+        </div>
       </div>
       <div id="preview-grid" class="preview-grid"></div>
     </div>
   </div>
-
-  <canvas id="work-canvas" hidden></canvas>
 
   <script src="https://cdn.jsdelivr.net/npm/imagetracerjs@1.2.6/imagetracer_v1.2.6.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>

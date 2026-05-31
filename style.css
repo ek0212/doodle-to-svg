@@ -17,7 +17,6 @@
   --accent-hover: #c4b5fd;
   --primary: #f4f4f5;
   --primary-fg: #0e0e10;
-  --danger: #ef4444;
   --radius: 12px;
 }
 
@@ -91,39 +90,72 @@ h1 {
   margin-top: 4px;
 }
 
-.upload-zone.has-image {
-  padding: 16px;
-  border-style: solid;
-}
-
-.upload-zone.has-image .upload-content {
-  display: none;
-}
-
-.upload-zone img {
-  max-width: 100%;
-  max-height: 400px;
-  border-radius: 8px;
-}
-
-/* Controls */
-.controls {
+/* Drawing stage */
+.draw-section {
   margin-top: 24px;
+}
+
+.draw-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.draw-header h2 {
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+
+.draw-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.draw-hint {
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  margin-bottom: 12px;
+}
+
+.draw-canvas-wrap {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--surface);
+  display: flex;
+  justify-content: center;
+}
+
+.draw-canvas-wrap canvas {
+  max-width: 100%;
+  cursor: crosshair;
+  touch-action: none;
+}
+
+.draw-controls {
+  margin-top: 16px;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 24px;
+  padding: 16px 20px;
 }
 
 .control-group {
   display: flex;
   align-items: center;
   gap: 12px;
-  margin-bottom: 16px;
+  margin-bottom: 12px;
+}
+
+.control-group:last-child {
+  margin-bottom: 0;
 }
 
 .control-group label {
-  min-width: 160px;
+  min-width: 120px;
   font-size: 0.85rem;
   color: var(--text-muted);
 }
@@ -143,7 +175,7 @@ h1 {
 .button-row {
   display: flex;
   gap: 10px;
-  margin-top: 20px;
+  margin-top: 16px;
   flex-wrap: wrap;
 }
 
@@ -161,6 +193,11 @@ h1 {
 .btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+.btn-sm {
+  padding: 6px 12px;
+  font-size: 0.8rem;
 }
 
 .btn-primary {
@@ -201,11 +238,18 @@ h1 {
   justify-content: space-between;
   align-items: center;
   margin-bottom: 16px;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .preview-header h2 {
   font-size: 1.1rem;
   font-weight: 600;
+}
+
+.preview-actions {
+  display: flex;
+  gap: 6px;
 }
 
 .preview-grid {
@@ -327,5 +371,10 @@ h1 {
 
   .preview-grid {
     grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  }
+
+  .draw-header {
+    flex-direction: column;
+    align-items: flex-start;
   }
 }

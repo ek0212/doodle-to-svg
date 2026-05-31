@@ -4,31 +4,33 @@ const FLAGS = {
 };
 
 function dbg(...args) {
-  if (FLAGS.DEBUG) console.log("[doodle2svg]", ...args);
+  if (FLAGS.DEBUG) console.log("🖊️", ...args);
 }
 
-/** @type {HTMLCanvasElement} */
-const canvas = document.getElementById("work-canvas");
-const ctx = canvas.getContext("2d", { willReadFrequently: true });
+// --- DOM refs ---
+
+const drawCanvas = document.getElementById("draw-canvas");
+const drawCtx = drawCanvas.getContext("2d", { willReadFrequently: true });
 
 const uploadZone = document.getElementById("upload-zone");
 const fileInput = document.getElementById("file-input");
-const controls = document.getElementById("controls");
+const drawSection = document.getElementById("draw-section");
+const drawTitle = document.getElementById("draw-title");
 const previewSection = document.getElementById("preview-section");
 const previewGrid = document.getElementById("preview-grid");
 const resultTitle = document.getElementById("result-title");
 const btnDownloadAll = document.getElementById("btn-download-all");
+const btnTraceRegions = document.getElementById("btn-trace-regions");
 const thresholdInput = document.getElementById("threshold");
 const thresholdVal = document.getElementById("threshold-val");
-const minSizeInput = document.getElementById("min-size");
-const minSizeVal = document.getElementById("min-size-val");
-const groupDistInput = document.getElementById("group-dist");
-const groupDistVal = document.getElementById("group-dist-val");
 const paddingInput = document.getElementById("padding");
 const paddingVal = document.getElementById("padding-val");
 
 let loadedImage = null;
 let generatedSVGs = [];
+let regions = []; // { x, y, w, h }
+let drawing = false;
+let lassoPoints = [];
 
 // --- Upload handling ---
 
@@ -51,29 +53,251 @@ uploadZone.addEventListener("drop", (e) => {
 
 function handleFile(file) {
   if (!file) return;
-  dbg("file selected:", file.name, file.type, `${(file.size / 1024).toFixed(1)}KB`);
+  dbg("📁 file:", file.name, file.type, `${(file.size / 1024).toFixed(1)}KB`);
   const reader = new FileReader();
   reader.onload = (e) => {
     const img = new Image();
     img.onload = () => {
       loadedImage = img;
-      dbg("image loaded:", img.naturalWidth, "x", img.naturalHeight);
-      showImagePreview(e.target.result);
-      controls.classList.remove("hidden");
+      dbg("🖼️ loaded:", img.naturalWidth, "x", img.naturalHeight);
+      regions = [];
+      generatedSVGs = [];
+      setupDrawCanvas();
+      uploadZone.classList.add("hidden");
+      drawSection.classList.remove("hidden");
       previewSection.classList.add("hidden");
+      updateTitle();
     };
     img.src = e.target.result;
   };
   reader.readAsDataURL(file);
 }
 
-function showImagePreview(src) {
-  uploadZone.classList.add("has-image");
-  const existing = uploadZone.querySelector("img");
-  if (existing) existing.remove();
-  const img = document.createElement("img");
-  img.src = src;
-  uploadZone.appendChild(img);
+// --- Drawing canvas setup ---
+
+function setupDrawCanvas() {
+  drawCanvas.width = loadedImage.naturalWidth;
+  drawCanvas.height = loadedImage.naturalHeight;
+  dbg("🎨 canvas set:", drawCanvas.width, "x", drawCanvas.height);
+  redraw();
+}
+
+function redraw() {
+  const t0 = performance.now();
+  drawCtx.clearRect(0, 0, drawCanvas.width, drawCanvas.height);
+  drawCtx.drawImage(loadedImage, 0, 0);
+
+  const pad = parseInt(paddingInput.value);
+
+  // Draw dim overlay where no region exists, highlight regions
+  if (regions.length > 0) {
+    drawCtx.fillStyle = "rgba(0, 0, 0, 0.35)";
+    drawCtx.fillRect(0, 0, drawCanvas.width, drawCanvas.height);
+
+    // Cut out regions to show original image
+    regions.forEach((r) => {
+      const x = Math.max(0, r.x - pad);
+      const y = Math.max(0, r.y - pad);
+      const w = Math.min(drawCanvas.width - x, r.w + pad * 2);
+      const h = Math.min(drawCanvas.height - y, r.h + pad * 2);
+
+      drawCtx.save();
+      drawCtx.beginPath();
+      drawCtx.roundRect(x, y, w, h, 4);
+      drawCtx.clip();
+      drawCtx.drawImage(loadedImage, 0, 0);
+      drawCtx.restore();
+    });
+  }
+
+  // Draw region boxes + labels
+  regions.forEach((r, i) => {
+    const x = Math.max(0, r.x - pad);
+    const y = Math.max(0, r.y - pad);
+    const w = Math.min(drawCanvas.width - x, r.w + pad * 2);
+    const h = Math.min(drawCanvas.height - y, r.h + pad * 2);
+
+    drawCtx.strokeStyle = "#22c55e";
+    drawCtx.lineWidth = 3;
+    drawCtx.strokeRect(x, y, w, h);
+
+    // Label
+    const label = `${i + 1}`;
+    drawCtx.font = "bold 16px sans-serif";
+    const labelW = drawCtx.measureText(label).width + 10;
+    drawCtx.fillStyle = "#22c55e";
+    drawCtx.fillRect(x, y - 22, labelW, 22);
+    drawCtx.fillStyle = "#000";
+    drawCtx.fillText(label, x + 5, y - 6);
+  });
+
+  dbg("🎨 redraw:", regions.length, "regions,", (performance.now() - t0).toFixed(1), "ms");
+}
+
+function updateTitle() {
+  drawTitle.textContent =
+    regions.length === 0
+      ? "Draw around each icon"
+      : `${regions.length} region${regions.length > 1 ? "s" : ""} marked`;
+  btnTraceRegions.disabled = regions.length === 0;
+}
+
+// --- Canvas pointer: lasso to create, click to delete ---
+
+function getCanvasPos(e) {
+  const rect = drawCanvas.getBoundingClientRect();
+  return {
+    x: (e.offsetX / rect.width) * drawCanvas.width,
+    y: (e.offsetY / rect.height) * drawCanvas.height,
+  };
+}
+
+function getTouchCanvasPos(touch) {
+  const rect = drawCanvas.getBoundingClientRect();
+  return {
+    x: ((touch.clientX - rect.left) / rect.width) * drawCanvas.width,
+    y: ((touch.clientY - rect.top) / rect.height) * drawCanvas.height,
+  };
+}
+
+drawCanvas.addEventListener("mousedown", (e) => {
+  const pos = getCanvasPos(e);
+  const pad = parseInt(paddingInput.value);
+
+  // Check if clicking existing region to delete
+  const hit = findRegionAt(pos.x, pos.y, pad);
+  if (hit >= 0) {
+    dbg("🗑️ removed region", hit + 1, ":", regions[hit]);
+    regions.splice(hit, 1);
+    updateTitle();
+    redraw();
+    return;
+  }
+
+  // Start drawing lasso
+  drawing = true;
+  lassoPoints = [pos];
+  dbg("✏️ lasso start:", Math.round(pos.x), Math.round(pos.y));
+});
+
+drawCanvas.addEventListener("mousemove", (e) => {
+  if (!drawing) return;
+  const pos = getCanvasPos(e);
+  lassoPoints.push(pos);
+  redraw();
+  drawLassoPath();
+});
+
+drawCanvas.addEventListener("mouseup", () => finishLasso());
+drawCanvas.addEventListener("mouseleave", () => {
+  if (drawing) finishLasso();
+});
+
+// Touch
+drawCanvas.addEventListener("touchstart", (e) => {
+  e.preventDefault();
+  const pos = getTouchCanvasPos(e.touches[0]);
+  const pad = parseInt(paddingInput.value);
+
+  const hit = findRegionAt(pos.x, pos.y, pad);
+  if (hit >= 0) {
+    dbg("🗑️ removed region", hit + 1);
+    regions.splice(hit, 1);
+    updateTitle();
+    redraw();
+    return;
+  }
+
+  drawing = true;
+  lassoPoints = [pos];
+});
+
+drawCanvas.addEventListener("touchmove", (e) => {
+  if (!drawing) return;
+  e.preventDefault();
+  const pos = getTouchCanvasPos(e.touches[0]);
+  lassoPoints.push(pos);
+  redraw();
+  drawLassoPath();
+});
+
+drawCanvas.addEventListener("touchend", (e) => {
+  e.preventDefault();
+  finishLasso();
+});
+
+function findRegionAt(x, y, pad) {
+  // Search in reverse so topmost region is found first
+  for (let i = regions.length - 1; i >= 0; i--) {
+    const r = regions[i];
+    const rx = r.x - pad;
+    const ry = r.y - pad;
+    const rw = r.w + pad * 2;
+    const rh = r.h + pad * 2;
+    if (x >= rx && x <= rx + rw && y >= ry && y <= ry + rh) return i;
+  }
+  return -1;
+}
+
+function drawLassoPath() {
+  if (lassoPoints.length < 2) return;
+  drawCtx.strokeStyle = "#a78bfa";
+  drawCtx.lineWidth = 3;
+  drawCtx.setLineDash([8, 5]);
+  drawCtx.beginPath();
+  drawCtx.moveTo(lassoPoints[0].x, lassoPoints[0].y);
+  for (let i = 1; i < lassoPoints.length; i++) {
+    drawCtx.lineTo(lassoPoints[i].x, lassoPoints[i].y);
+  }
+  drawCtx.closePath();
+  drawCtx.stroke();
+  drawCtx.setLineDash([]);
+
+  // Fill with translucent accent
+  drawCtx.fillStyle = "rgba(167, 139, 250, 0.1)";
+  drawCtx.fill();
+}
+
+function finishLasso() {
+  if (!drawing) return;
+  drawing = false;
+
+  if (lassoPoints.length < 10) {
+    dbg("✏️ lasso too short, ignored:", lassoPoints.length, "points");
+    lassoPoints = [];
+    redraw();
+    return;
+  }
+
+  // Convert to bounding box
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const p of lassoPoints) {
+    if (p.x < minX) minX = p.x;
+    if (p.y < minY) minY = p.y;
+    if (p.x > maxX) maxX = p.x;
+    if (p.y > maxY) maxY = p.y;
+  }
+
+  const region = {
+    x: Math.round(minX),
+    y: Math.round(minY),
+    w: Math.round(maxX - minX),
+    h: Math.round(maxY - minY),
+  };
+
+  // Ignore tiny regions (accidental clicks)
+  if (region.w < 20 || region.h < 20) {
+    dbg("✏️ region too small, ignored:", region.w, "x", region.h);
+    lassoPoints = [];
+    redraw();
+    return;
+  }
+
+  dbg("🎯 region added:", `${region.w}x${region.h} at (${region.x},${region.y})`);
+  regions.push(region);
+  lassoPoints = [];
+  updateTitle();
+  redraw();
 }
 
 // --- Slider labels ---
@@ -81,41 +305,70 @@ function showImagePreview(src) {
 thresholdInput.addEventListener("input", () => {
   thresholdVal.textContent = thresholdInput.value;
 });
-minSizeInput.addEventListener("input", () => {
-  minSizeVal.textContent = minSizeInput.value;
-});
-groupDistInput.addEventListener("input", () => {
-  groupDistVal.textContent = groupDistInput.value;
-});
 paddingInput.addEventListener("input", () => {
   paddingVal.textContent = paddingInput.value;
+  redraw();
 });
 
 // --- Buttons ---
 
-document.getElementById("btn-single").addEventListener("click", traceWhole);
-document.getElementById("btn-split").addEventListener("click", autoSplit);
-document.getElementById("btn-reset").addEventListener("click", resetApp);
+document.getElementById("btn-undo").addEventListener("click", () => {
+  if (regions.length === 0) return;
+  const removed = regions.pop();
+  dbg("↩️ undo: removed region", regions.length + 1, removed);
+  updateTitle();
+  redraw();
+});
+
+document.getElementById("btn-clear").addEventListener("click", () => {
+  dbg("🧹 clear all:", regions.length, "regions removed");
+  regions = [];
+  updateTitle();
+  redraw();
+});
+
+document.getElementById("btn-trace-whole").addEventListener("click", traceWhole);
+btnTraceRegions.addEventListener("click", traceRegions);
 btnDownloadAll.addEventListener("click", downloadAllZip);
+
+document.getElementById("btn-new-image").addEventListener("click", () => {
+  dbg("🔄 new image");
+  loadedImage = null;
+  regions = [];
+  generatedSVGs = [];
+  uploadZone.classList.remove("hidden");
+  drawSection.classList.add("hidden");
+  previewSection.classList.add("hidden");
+  fileInput.value = "";
+});
+
+document.getElementById("btn-back-draw").addEventListener("click", () => {
+  dbg("⬅️ back to drawing");
+  previewSection.classList.add("hidden");
+  drawSection.classList.remove("hidden");
+  redraw();
+});
 
 // --- Trace whole page ---
 
 function traceWhole() {
   if (!loadedImage) return;
-  showSpinner("Tracing...");
+  dbg("🔄 traceWhole: full-page trace starting");
+  showSpinner("Tracing whole page...");
 
   setTimeout(() => {
     try {
-      dbg("traceWhole: threshold =", thresholdInput.value);
       const t0 = performance.now();
+      dbg("⚙️ threshold =", thresholdInput.value);
       const binarized = getBinarizedCanvas(loadedImage);
-      dbg("binarize done:", (performance.now() - t0).toFixed(1), "ms");
+      dbg("⬛ binarize done:", (performance.now() - t0).toFixed(1), "ms");
       const svgStr = traceCanvas(binarized);
-      dbg("trace done:", (performance.now() - t0).toFixed(1), "ms, SVG size:", svgStr.length, "chars");
+      dbg("✅ trace done:", (performance.now() - t0).toFixed(1), "ms, SVG:", svgStr.length, "chars");
       generatedSVGs = [{ name: "doodle.svg", svg: svgStr }];
+      drawSection.classList.add("hidden");
       renderResults(true);
     } catch (err) {
-      console.error("traceWhole failed:", err);
+      console.error("❌ traceWhole failed:", err);
       alert("Tracing failed: " + err.message);
     } finally {
       hideSpinner();
@@ -123,93 +376,51 @@ function traceWhole() {
   }, 50);
 }
 
-// --- Auto-split ---
+// --- Trace marked regions ---
 
-function autoSplit() {
-  if (!loadedImage) return;
-  showSpinner("Detecting icons...");
+function traceRegions() {
+  if (regions.length === 0) return;
+  dbg("🔄 traceRegions:", regions.length, "regions to trace");
+  showSpinner(`Tracing ${regions.length} region${regions.length > 1 ? "s" : ""}...`);
 
   setTimeout(() => {
     try {
-      const threshold = parseInt(thresholdInput.value);
-      const minSize = parseInt(minSizeInput.value);
-      const groupDist = parseInt(groupDistInput.value);
       const pad = parseInt(paddingInput.value);
-
-      dbg("autoSplit: threshold =", threshold, "minSize =", minSize, "groupDist =", groupDist, "pad =", pad);
+      const threshold = parseInt(thresholdInput.value);
       const t0 = performance.now();
+      generatedSVGs = [];
 
-      // Draw and binarize
-      canvas.width = loadedImage.naturalWidth;
-      canvas.height = loadedImage.naturalHeight;
-      ctx.drawImage(loadedImage, 0, 0);
-      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-      const binary = binarize(imageData, threshold);
-      dbg("binarize done:", (performance.now() - t0).toFixed(1), "ms");
+      regions.forEach((box, i) => {
+        const x = Math.max(0, box.x - pad);
+        const y = Math.max(0, box.y - pad);
+        const w = Math.min(loadedImage.naturalWidth - x, box.w + pad * 2);
+        const h = Math.min(loadedImage.naturalHeight - y, box.h + pad * 2);
 
-      // Connected components
-      const bboxes = findConnectedComponents(
-        binary,
-        canvas.width,
-        canvas.height,
-        minSize
-      );
-      dbg("connected components:", bboxes.length, "found in", (performance.now() - t0).toFixed(1), "ms");
-      if (FLAGS.DEBUG) bboxes.forEach((b, i) => dbg(`  cc[${i}]:`, b));
+        dbg(`⚙️ region ${i + 1}/${regions.length}: extracting ${w}x${h} at (${x},${y})`);
 
-      // Merge nearby bboxes using group distance
-      const merged = mergeBBoxes(bboxes, groupDist);
-      dbg("after merge:", merged.length, "icons");
-      if (FLAGS.DEBUG) merged.forEach((b, i) => dbg(`  icon[${i}]:`, b));
+        const regionCanvas = document.createElement("canvas");
+        regionCanvas.width = w;
+        regionCanvas.height = h;
+        const rctx = regionCanvas.getContext("2d");
+        rctx.drawImage(loadedImage, x, y, w, h, 0, 0, w, h);
 
-      if (merged.length === 0) {
-        hideSpinner();
-        alert("No icons detected. Try lowering the threshold or min size.");
-        return;
-      }
+        const binarized = getBinarizedCanvas(regionCanvas, threshold);
+        const svgStr = traceCanvas(binarized);
+        dbg(`✅ region ${i + 1}: SVG ${svgStr.length} chars, ${(performance.now() - t0).toFixed(1)}ms elapsed`);
 
-      showSpinner(`Tracing ${merged.length} icon${merged.length > 1 ? "s" : ""}...`);
+        generatedSVGs.push({
+          name: `icon-${String(i + 1).padStart(2, "0")}.svg`,
+          svg: svgStr,
+        });
+      });
 
-      setTimeout(() => {
-        try {
-          generatedSVGs = [];
-
-          merged.forEach((box, i) => {
-            const x = Math.max(0, box.x - pad);
-            const y = Math.max(0, box.y - pad);
-            const w = Math.min(canvas.width - x, box.w + pad * 2);
-            const h = Math.min(canvas.height - y, box.h + pad * 2);
-
-            // Extract region
-            const regionCanvas = document.createElement("canvas");
-            regionCanvas.width = w;
-            regionCanvas.height = h;
-            const rctx = regionCanvas.getContext("2d");
-            rctx.drawImage(loadedImage, x, y, w, h, 0, 0, w, h);
-
-            const binarized = getBinarizedCanvas(
-              regionCanvas,
-              parseInt(thresholdInput.value)
-            );
-            const svgStr = traceCanvas(binarized);
-            dbg(`icon ${i + 1}: region ${w}x${h} at (${x},${y}), SVG ${svgStr.length} chars`);
-            generatedSVGs.push({
-              name: `icon-${String(i + 1).padStart(2, "0")}.svg`,
-              svg: svgStr,
-            });
-          });
-
-          renderResults(false);
-        } catch (err) {
-          console.error("autoSplit tracing failed:", err);
-          alert("Tracing failed: " + err.message);
-        } finally {
-          hideSpinner();
-        }
-      }, 50);
+      dbg(`🎉 all done: ${regions.length} regions in ${(performance.now() - t0).toFixed(1)}ms`);
+      drawSection.classList.add("hidden");
+      renderResults(false);
     } catch (err) {
-      console.error("autoSplit detection failed:", err);
-      alert("Detection failed: " + err.message);
+      console.error("❌ traceRegions failed:", err);
+      alert("Tracing failed: " + err.message);
+    } finally {
       hideSpinner();
     }
   }, 50);
@@ -250,162 +461,11 @@ function getBinarizedCanvas(source, thresh) {
   return tempCanvas;
 }
 
-function binarize(imageData, threshold) {
-  const d = imageData.data;
-  const out = new Uint8Array(imageData.width * imageData.height);
-  for (let i = 0; i < out.length; i++) {
-    const off = i * 4;
-    const gray = d[off] * 0.299 + d[off + 1] * 0.587 + d[off + 2] * 0.114;
-    out[i] = gray < threshold ? 1 : 0;
-  }
-  return out;
-}
-
-// --- Connected component labeling (two-pass) ---
-
-function findConnectedComponents(binary, w, h, minSize) {
-  const labels = new Int32Array(w * h);
-  const parent = [0];
-  let nextLabel = 1;
-
-  function find(x) {
-    while (parent[x] !== x) {
-      parent[x] = parent[parent[x]];
-      x = parent[x];
-    }
-    return x;
-  }
-
-  function union(a, b) {
-    a = find(a);
-    b = find(b);
-    if (a !== b) parent[Math.max(a, b)] = Math.min(a, b);
-  }
-
-  // First pass
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      const idx = y * w + x;
-      if (binary[idx] === 0) continue;
-
-      const neighbors = [];
-      if (x > 0 && labels[idx - 1] > 0) neighbors.push(labels[idx - 1]);
-      if (y > 0 && labels[idx - w] > 0) neighbors.push(labels[idx - w]);
-      if (x > 0 && y > 0 && labels[idx - w - 1] > 0)
-        neighbors.push(labels[idx - w - 1]);
-      if (x < w - 1 && y > 0 && labels[idx - w + 1] > 0)
-        neighbors.push(labels[idx - w + 1]);
-
-      if (neighbors.length === 0) {
-        labels[idx] = nextLabel;
-        parent.push(nextLabel);
-        nextLabel++;
-      } else {
-        const minLabel = Math.min(...neighbors);
-        labels[idx] = minLabel;
-        for (const n of neighbors) union(n, minLabel);
-      }
-    }
-  }
-
-  // Second pass — collect bounding boxes
-  const boxes = {};
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      const idx = y * w + x;
-      if (labels[idx] === 0) continue;
-      const root = find(labels[idx]);
-      if (!boxes[root]) {
-        boxes[root] = { minX: x, minY: y, maxX: x, maxY: y, pixels: 0 };
-      }
-      const b = boxes[root];
-      if (x < b.minX) b.minX = x;
-      if (y < b.minY) b.minY = y;
-      if (x > b.maxX) b.maxX = x;
-      if (y > b.maxY) b.maxY = y;
-      b.pixels++;
-    }
-  }
-
-  // Filter by min size
-  const result = [];
-  for (const key of Object.keys(boxes)) {
-    const b = boxes[key];
-    const bw = b.maxX - b.minX;
-    const bh = b.maxY - b.minY;
-    if (bw >= minSize || bh >= minSize) {
-      result.push({ x: b.minX, y: b.minY, w: bw, h: bh });
-    }
-  }
-
-  return result;
-}
-
-// --- Merge nearby bounding boxes ---
-
-function mergeBBoxes(boxes, groupDist) {
-  if (boxes.length === 0) return [];
-
-  // Expand each box by groupDist to find nearby components, merge overlapping, shrink back
-  let expanded = boxes.map((b) => ({
-    x: b.x - groupDist,
-    y: b.y - groupDist,
-    w: b.w + groupDist * 2,
-    h: b.h + groupDist * 2,
-  }));
-
-  let changed = true;
-  while (changed) {
-    changed = false;
-    const merged = [];
-    const used = new Set();
-
-    for (let i = 0; i < expanded.length; i++) {
-      if (used.has(i)) continue;
-      let current = { ...expanded[i] };
-
-      for (let j = i + 1; j < expanded.length; j++) {
-        if (used.has(j)) continue;
-        if (overlaps(current, expanded[j])) {
-          current = unionBox(current, expanded[j]);
-          used.add(j);
-          changed = true;
-        }
-      }
-      merged.push(current);
-    }
-    expanded = merged;
-  }
-
-  // Shrink back to tight bounding boxes
-  return expanded.map((b) => ({
-    x: b.x + groupDist,
-    y: b.y + groupDist,
-    w: b.w - groupDist * 2,
-    h: b.h - groupDist * 2,
-  }));
-}
-
-function overlaps(a, b) {
-  return (
-    a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y
-  );
-}
-
-function unionBox(a, b) {
-  const x = Math.min(a.x, b.x);
-  const y = Math.min(a.y, b.y);
-  return {
-    x,
-    y,
-    w: Math.max(a.x + a.w, b.x + b.w) - x,
-    h: Math.max(a.y + a.h, b.y + b.h) - y,
-  };
-}
-
 // --- SVG tracing via imagetracerjs ---
 
 function traceCanvas(inputCanvas) {
+  dbg("🖊️ tracing canvas:", inputCanvas.width, "x", inputCanvas.height);
+  const t0 = performance.now();
   const imgd = inputCanvas
     .getContext("2d", { willReadFrequently: true })
     .getImageData(0, 0, inputCanvas.width, inputCanvas.height);
@@ -420,12 +480,14 @@ function traceCanvas(inputCanvas) {
 
   const traceData = ImageTracer.imagedataToTracedata(imgd, options);
   const svgStr = ImageTracer.getsvgstring(traceData, options);
+  dbg("🖊️ traced:", svgStr.length, "chars in", (performance.now() - t0).toFixed(1), "ms");
   return svgStr;
 }
 
 // --- Render results ---
 
 function renderResults(isSingle) {
+  dbg("📊 rendering:", generatedSVGs.length, "SVGs");
   previewGrid.innerHTML = "";
   previewSection.classList.remove("hidden");
 
@@ -433,11 +495,11 @@ function renderResults(isSingle) {
     resultTitle.textContent = "Traced SVG";
     btnDownloadAll.classList.add("hidden");
   } else {
-    resultTitle.textContent = `${generatedSVGs.length} Icons Detected`;
+    resultTitle.textContent = `${generatedSVGs.length} Icons Traced`;
     btnDownloadAll.classList.toggle("hidden", generatedSVGs.length <= 1);
   }
 
-  generatedSVGs.forEach((item, i) => {
+  generatedSVGs.forEach((item) => {
     const card = document.createElement("div");
     card.className = "preview-card" + (isSingle ? " full-width" : "");
 
@@ -451,13 +513,18 @@ function renderResults(isSingle) {
     const dlBtn = document.createElement("button");
     dlBtn.className = "btn btn-primary";
     dlBtn.textContent = "Download SVG";
-    dlBtn.addEventListener("click", () => downloadSVG(item.name, item.svg));
+    dlBtn.addEventListener("click", () => {
+      dbg("💾 download:", item.name);
+      const blob = new Blob([item.svg], { type: "image/svg+xml" });
+      saveAs(blob, item.name);
+    });
 
     const cpBtn = document.createElement("button");
     cpBtn.className = "btn btn-ghost";
     cpBtn.textContent = "Copy SVG";
     cpBtn.addEventListener("click", () => {
       navigator.clipboard.writeText(item.svg).then(() => {
+        dbg("📋 copied:", item.name);
         cpBtn.textContent = "Copied!";
         setTimeout(() => (cpBtn.textContent = "Copy SVG"), 1500);
       });
@@ -475,12 +542,8 @@ function renderResults(isSingle) {
 
 // --- Downloads ---
 
-function downloadSVG(name, svgStr) {
-  const blob = new Blob([svgStr], { type: "image/svg+xml" });
-  saveAs(blob, name);
-}
-
 function downloadAllZip() {
+  dbg("💾 zip download:", generatedSVGs.length, "files");
   const zip = new JSZip();
   generatedSVGs.forEach((item) => zip.file(item.name, item.svg));
   zip.generateAsync({ type: "blob" }).then((blob) => {
@@ -488,23 +551,10 @@ function downloadAllZip() {
   });
 }
 
-// --- Reset ---
-
-function resetApp() {
-  loadedImage = null;
-  generatedSVGs = [];
-  uploadZone.classList.remove("has-image");
-  const img = uploadZone.querySelector("img");
-  if (img) img.remove();
-  controls.classList.add("hidden");
-  previewSection.classList.add("hidden");
-  previewGrid.innerHTML = "";
-  fileInput.value = "";
-}
-
 // --- Spinner ---
 
 function showSpinner(text) {
+  dbg("⏳", text);
   const overlay = document.createElement("div");
   overlay.className = "spinner-overlay";
   overlay.id = "spinner";
